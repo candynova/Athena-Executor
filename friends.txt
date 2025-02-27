@@ -1,0 +1,131 @@
+<?php
+// Include the database connection and session management
+include('config.php');
+session_start();
+
+// Check if the user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+
+// Fetch the user's details
+$sql_user = "SELECT username, profile_picture FROM users WHERE user_id = ?";
+$stmt_user = mysqli_prepare($conn, $sql_user);
+mysqli_stmt_bind_param($stmt_user, "i", $user_id);
+mysqli_stmt_execute($stmt_user);
+$result_user = mysqli_stmt_get_result($stmt_user);
+$user = mysqli_fetch_assoc($result_user);
+
+// Default profile picture if not set
+$profile_picture = !empty($user['profile_picture']) ? $user['profile_picture'] : '/assets/profilepic.png';
+
+// Handle friend request sending
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['friend_id'])) {
+    $friend_id = (int) $_POST['friend_id'];
+
+    // Check if the friend request already exists
+    $sql_check = "SELECT * FROM friends WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)";
+    $stmt_check = mysqli_prepare($conn, $sql_check);
+    mysqli_stmt_bind_param($stmt_check, "iiii", $user_id, $friend_id, $friend_id, $user_id);
+    mysqli_stmt_execute($stmt_check);
+    $result_check = mysqli_stmt_get_result($stmt_check);
+
+    if (mysqli_num_rows($result_check) == 0) {
+        // No existing friend request, create a new one
+        $sql_send_request = "INSERT INTO friends (user_id, friend_id, status, created_at) VALUES (?, ?, 'pending', NOW())";
+        $stmt_send_request = mysqli_prepare($conn, $sql_send_request);
+        mysqli_stmt_bind_param($stmt_send_request, "ii", $user_id, $friend_id);
+        mysqli_stmt_execute($stmt_send_request);
+        // Optionally, add a success message (use session or a flash message)
+    }
+}
+
+// Handle accepting a friend request
+if (isset($_GET['accept_friend_id'])) {
+    $friend_request_id = (int) $_GET['accept_friend_id'];
+
+    // Update the status of the friend request to 'accepted'
+    $sql_accept_request = "UPDATE friends SET status = 'accepted' WHERE id = ? AND friend_id = ?";
+    $stmt_accept_request = mysqli_prepare($conn, $sql_accept_request);
+    mysqli_stmt_bind_param($stmt_accept_request, "ii", $friend_request_id, $user_id);
+    mysqli_stmt_execute($stmt_accept_request);
+    // Optionally, add a success message (use session or a flash message)
+}
+
+// Fetch friends (accepted status)
+$sql_friends = "SELECT u.user_id, u.username, u.profile_picture, f.created_at FROM friends f
+                JOIN users u ON f.friend_id = u.user_id
+                WHERE f.user_id = ? AND f.status = 'accepted' 
+                UNION 
+                SELECT u.user_id, u.username, u.profile_picture, f.created_at FROM friends f
+                JOIN users u ON f.user_id = u.user_id
+                WHERE f.friend_id = ? AND f.status = 'accepted'";
+$stmt_friends = mysqli_prepare($conn, $sql_friends);
+mysqli_stmt_bind_param($stmt_friends, "ii", $user_id, $user_id);
+mysqli_stmt_execute($stmt_friends);
+$result_friends = mysqli_stmt_get_result($stmt_friends);
+
+// Fetch pending friend requests
+$sql_pending_requests = "SELECT f.id, u.user_id, u.username, u.profile_picture FROM friends f
+                         JOIN users u ON f.user_id = u.user_id
+                         WHERE f.friend_id = ? AND f.status = 'pending'";
+$stmt_pending_requests = mysqli_prepare($conn, $sql_pending_requests);
+mysqli_stmt_bind_param($stmt_pending_requests, "i", $user_id);
+mysqli_stmt_execute($stmt_pending_requests);
+$result_pending_requests = mysqli_stmt_get_result($stmt_pending_requests);
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Friends</title>
+    <link rel="stylesheet" href="friends.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="homepage.php">Home</a>
+            <a href="profile.php">Profile</a>
+            <a href="logout.php">Logout</a>
+        </nav>
+    </header>
+
+    <div class="container">
+        <aside class="sidebar">
+            <h2>Send Friend Request</h2>
+            <form method="POST" action="friends.php">
+                <input type="number" name="friend_id" placeholder="Enter Friend's ID" required>
+                <button type="submit">Send Friend Request</button>
+            </form>
+        </aside>
+
+        <main class="friends-list">
+            <h2>Pending Friend Requests</h2>
+            <ul>
+                <?php while ($pending_request = mysqli_fetch_assoc($result_pending_requests)): ?>
+                    <li>
+                        <img src="<?= htmlspecialchars($pending_request['profile_picture']) ?>" alt="Profile Picture">
+                        <?= htmlspecialchars($pending_request['username']) ?>
+                        <a href="friends.php?accept_friend_id=<?= $pending_request['id'] ?>" class="accept-btn">Accept</a>
+                    </li>
+                <?php endwhile; ?>
+            </ul>
+
+            <h2>Your Friends</h2>
+            <ul>
+                <?php while ($friend = mysqli_fetch_assoc($result_friends)): ?>
+                    <li>
+                        <img src="<?= htmlspecialchars($friend['profile_picture']) ?>" alt="Profile Picture">
+                        <?= htmlspecialchars($friend['username']) ?>
+                    </li>
+                <?php endwhile; ?>
+            </ul>
+        </main>
+    </div>
+</body>
+</html>

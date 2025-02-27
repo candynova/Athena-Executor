@@ -1,0 +1,208 @@
+<?php
+// Include database connection and session management
+include('config.php');
+session_start();
+
+// Check if the user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+
+// Handle group actions (create, join, leave, kick)
+function handleGroupAction($conn, $user_id) {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        // Handle group creation
+        if (isset($_POST['create_group'])) {
+            return createGroup($conn, $user_id);
+        }
+        // Handle joining a group
+        if (isset($_POST['join_group'])) {
+            return joinGroup($conn, $user_id);
+        }
+        // Handle leaving a group
+        if (isset($_POST['leave_group'])) {
+            return leaveGroup($conn, $user_id);
+        }
+        // Handle kicking a member
+        if (isset($_POST['kick_member'])) {
+            return kickMember($conn, $user_id);
+        }
+    }
+}
+
+function createGroup($conn, $user_id) {
+    $group_name = trim($_POST['group_name']);
+    $group_description = trim($_POST['group_description']);
+    
+    if (!empty($group_name)) {
+        $sql_create_group = "INSERT INTO groups (name, description, created_by) VALUES (?, ?, ?)";
+        $stmt = mysqli_prepare($conn, $sql_create_group);
+        mysqli_stmt_bind_param($stmt, "ssi", $group_name, $group_description, $user_id);
+        mysqli_stmt_execute($stmt);
+        $group_id = mysqli_insert_id($conn);
+        mysqli_stmt_close($stmt);
+        
+        addAdminToGroup($conn, $group_id, $user_id);
+        return "Group created successfully!";
+    }
+    return "Group name is required.";
+}
+
+function joinGroup($conn, $user_id) {
+    $group_id = $_POST['group_id'];
+    $sql_check_member = "SELECT * FROM group_members WHERE group_id = ? AND user_id = ?";
+    $stmt = mysqli_prepare($conn, $sql_check_member);
+    mysqli_stmt_bind_param($stmt, "ii", $group_id, $user_id);
+    mysqli_stmt_execute($stmt);
+    $result = mysqli_stmt_get_result($stmt);
+    
+    if (mysqli_num_rows($result) === 0) {
+        $sql_join_group = "INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, 'member')";
+        $stmt_join = mysqli_prepare($conn, $sql_join_group);
+        mysqli_stmt_bind_param($stmt_join, "ii", $group_id, $user_id);
+        mysqli_stmt_execute($stmt_join);
+        mysqli_stmt_close($stmt_join);
+        return "You joined the group!";
+    }
+    return "You are already a member of this group.";
+}
+
+function leaveGroup($conn, $user_id) {
+    $group_id = $_POST['group_id'];
+    $sql_leave_group = "DELETE FROM group_members WHERE group_id = ? AND user_id = ?";
+    $stmt_leave = mysqli_prepare($conn, $sql_leave_group);
+    mysqli_stmt_bind_param($stmt_leave, "ii", $group_id, $user_id);
+    mysqli_stmt_execute($stmt_leave);
+    mysqli_stmt_close($stmt_leave);
+    return "You left the group.";
+}
+
+function kickMember($conn, $user_id) {
+    $group_id = $_POST['group_id'];
+    $member_id = $_POST['member_id'];
+    
+    $sql_check_admin = "SELECT * FROM group_members WHERE group_id = ? AND user_id = ? AND role = 'admin'";
+    $stmt_check_admin = mysqli_prepare($conn, $sql_check_admin);
+    mysqli_stmt_bind_param($stmt_check_admin, "ii", $group_id, $user_id);
+    mysqli_stmt_execute($stmt_check_admin);
+    $result_admin = mysqli_stmt_get_result($stmt_check_admin);
+    
+    if (mysqli_num_rows($result_admin) > 0) {
+        $sql_kick_member = "DELETE FROM group_members WHERE group_id = ? AND user_id = ?";
+        $stmt_kick = mysqli_prepare($conn, $sql_kick_member);
+        mysqli_stmt_bind_param($stmt_kick, "ii", $group_id, $member_id);
+        mysqli_stmt_execute($stmt_kick);
+        mysqli_stmt_close($stmt_kick);
+        return "Member has been kicked from the group.";
+    }
+    return "You are not authorized to kick members.";
+}
+
+function addAdminToGroup($conn, $group_id, $user_id) {
+    $sql_add_admin = "INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, 'admin')";
+    $stmt_admin = mysqli_prepare($conn, $sql_add_admin);
+    mysqli_stmt_bind_param($stmt_admin, "ii", $group_id, $user_id);
+    mysqli_stmt_execute($stmt_admin);
+    mysqli_stmt_close($stmt_admin);
+}
+
+// Fetch all groups along with user group memberships in one query
+$sql_groups = "
+    SELECT g.group_id, g.name, g.description, g.created_at, u.username AS creator,
+           IF(gm.user_id IS NOT NULL, 1, 0) AS is_member
+    FROM groups g
+    LEFT JOIN users u ON g.created_by = u.user_id
+    LEFT JOIN group_members gm ON g.group_id = gm.group_id AND gm.user_id = ?
+    ORDER BY g.created_at DESC";
+
+$stmt_groups = mysqli_prepare($conn, $sql_groups);
+mysqli_stmt_bind_param($stmt_groups, "i", $user_id);
+mysqli_stmt_execute($stmt_groups);
+$result_groups = mysqli_stmt_get_result($stmt_groups);
+
+// Handle group actions
+$success_message = handleGroupAction($conn, $user_id);
+
+// Fetch groups the user has joined
+$sql_user_groups = "
+    SELECT gm.group_id
+    FROM group_members gm
+    WHERE gm.user_id = ?";
+$stmt_user_groups = mysqli_prepare($conn, $sql_user_groups);
+$user_groups = [];
+if ($stmt_user_groups) {
+    mysqli_stmt_bind_param($stmt_user_groups, "i", $user_id);
+    mysqli_stmt_execute($stmt_user_groups);
+    $result_user_groups = mysqli_stmt_get_result($stmt_user_groups);
+    while ($row = mysqli_fetch_assoc($result_user_groups)) {
+        $user_groups[] = $row['group_id'];
+    }
+    mysqli_stmt_close($stmt_user_groups);
+}
+
+// Close the database connection
+mysqli_close($conn);
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Groups - VibraSocial</title>
+    <link rel="stylesheet" href="/groups.css">
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <nav class="sidebar">
+        <ul>
+            <li><a href="homepage.php">Home</a></li>
+            <li><a href="profile.php">Profile</a></li>
+            <li><a href="friends.php">Friends</a></li> 
+            <li><a href="messages.php">Messages</a></li>
+            <li><a href="settings.php">Settings</a></li>
+        </ul>
+    </nav>
+    <div class="groups-container">
+        <h1>Join a Group!</h1>
+        <!-- Success/Error Messages -->
+        <?php if (isset($success_message)): ?>
+            <p class="success"><?php echo htmlspecialchars($success_message); ?></p>
+        <?php endif; ?>
+        <!-- Create Group Form -->
+        <div class="create-group">
+            <h2>Create a New Group</h2>
+            <form action="create_group.php" method="POST">
+                <input type="text" name="group_name" placeholder="Enter group name" required>
+                <textarea name="group_description" placeholder="Enter description" required></textarea>
+                <button type="submit" name="create_group">Create Group</button>
+            </form>
+        </div>
+        <!-- List of Groups -->
+        <div class="group-list">
+            <h2>Join A Group And Be Respectful :D</h2>
+            <?php while ($group = mysqli_fetch_assoc($result_groups)): ?>
+                <div class="group">
+                    <h3><?php echo htmlspecialchars($group['name']); ?></h3>
+                    <p><?php echo htmlspecialchars($group['description']); ?></p>
+                    <p>Created by: <?php echo htmlspecialchars($group['creator'] ?? 'Unknown'); ?></p>
+                    <form action="groups.php" method="POST" style="display: inline;">
+                        <input type="hidden" name="group_id" value="<?php echo htmlspecialchars($group['group_id']); ?>">
+                        <?php if (in_array($group['group_id'], $user_groups)): ?>
+                            <button type="submit" name="leave_group">Leave Group</button>
+                        <?php else: ?>
+                            <button type="submit" name="join_group">Join Group</button>
+                        <?php endif; ?>
+                    </form>
+                    <!-- 'View Group' is now a standalone link outside the form -->
+                    <a href="group_page.php?group_id=<?php echo htmlspecialchars($group['group_id']); ?>" class="view-group-btn">View Group</a>
+
+                </div>
+            <?php endwhile; ?>
+        </div>
+    </div>
+</body>
+</html>

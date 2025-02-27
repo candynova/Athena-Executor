@@ -1,0 +1,184 @@
+<?php
+// Include the database connection and session management
+include('config.php');
+session_start();
+
+// Check if the user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+
+// Fetch user data for the logged-in user
+$sql_user = "SELECT username, profile_picture, last_active FROM users WHERE user_id = ?";
+$stmt_user = mysqli_prepare($conn, $sql_user);
+mysqli_stmt_bind_param($stmt_user, "i", $user_id);  // Bind parameters for stmt_user
+mysqli_stmt_execute($stmt_user);
+$result_user = mysqli_stmt_get_result($stmt_user);
+$user = mysqli_fetch_assoc($result_user);
+
+// Default profile picture if not set
+$profile_picture = !empty($user['profile_picture']) ? $user['profile_picture'] : '/assets/profilepic.png';
+
+// Fetch all friends of the logged-in user where the friendship is 'accepted'
+$sql_friends = "SELECT u.user_id, u.username, u.profile_picture, u.last_active 
+                FROM users u
+                JOIN friends f ON (u.user_id = f.friend_id)
+                WHERE f.user_id = ? AND f.status = 'accepted'";  // Ensure you are checking for accepted friends
+$stmt_friends = mysqli_prepare($conn, $sql_friends);
+mysqli_stmt_bind_param($stmt_friends, "i", $user_id); // Bind parameters for stmt_friends
+mysqli_stmt_execute($stmt_friends);
+$result_friends = mysqli_stmt_get_result($stmt_friends);
+
+// Fetch conversations
+$sql_conversations = "SELECT DISTINCT m.conversation_id, u.username, u.profile_picture 
+                      FROM messages m
+                      JOIN users u ON (u.user_id = m.sender_id OR u.user_id = m.receiver_id)
+                      WHERE (m.sender_id = ? OR m.receiver_id = ?)
+                      GROUP BY m.conversation_id, u.user_id
+                      ORDER BY m.created_at DESC
+                      LIMIT 20"; // Limit the results to 20 conversations
+$stmt_conversations = mysqli_prepare($conn, $sql_conversations);
+mysqli_stmt_bind_param($stmt_conversations, "ii", $user_id, $user_id);
+mysqli_stmt_execute($stmt_conversations);
+$result_conversations = mysqli_stmt_get_result($stmt_conversations);
+
+// Fetch messages for a specific conversation
+$receiver_id = isset($_GET['receiver_id']) && is_numeric($_GET['receiver_id']) ? $_GET['receiver_id'] : null;
+$message_id = isset($_GET['message_id']) ? $_GET['message_id'] : null;
+$reactions = [];
+
+if ($receiver_id) {
+    $sql_messages = "SELECT m.message_id, m.message, m.created_at, u.username, u.profile_picture, m.sender_id, m.file_path, m.is_read
+                     FROM messages m
+                     JOIN users u ON u.user_id = m.sender_id
+                     WHERE (m.sender_id = ? AND m.receiver_id = ?) OR (m.sender_id = ? AND m.receiver_id = ?)
+                     ORDER BY m.created_at ASC";
+    $stmt_messages = mysqli_prepare($conn, $sql_messages);
+    mysqli_stmt_bind_param($stmt_messages, "iiii", $user_id, $receiver_id, $receiver_id, $user_id);
+    mysqli_stmt_execute($stmt_messages);
+    $result_messages = mysqli_stmt_get_result($stmt_messages);
+}
+
+// Handle sending a message
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['message']) && $receiver_id) {
+    $message = trim($_POST['message']);
+    $file_path = isset($_FILES['file']['name']) ? 'uploads/' . basename($_FILES['file']['name']) : null;
+
+    if (!empty($message)) {
+        // Check if a conversation exists
+        $sql_check_conversation = "SELECT conversation_id FROM messages WHERE 
+                                   (sender_id = ? AND receiver_id = ?) OR 
+                                   (sender_id = ? AND receiver_id = ?)
+                                   LIMIT 1";
+        $stmt_check_conversation = mysqli_prepare($conn, $sql_check_conversation);
+        mysqli_stmt_bind_param($stmt_check_conversation, "iiii", $user_id, $receiver_id, $receiver_id, $user_id);
+        mysqli_stmt_execute($stmt_check_conversation);
+        $result_check_conversation = mysqli_stmt_get_result($stmt_check_conversation);
+        $conversation = mysqli_fetch_assoc($result_check_conversation);
+        $conversation_id = $conversation ? $conversation['conversation_id'] : null;
+
+        if (!$conversation_id) {
+            $sql_create_conversation = "INSERT INTO messages (sender_id, receiver_id, message, created_at) 
+                                        VALUES (?, ?, ?, NOW())";
+            $stmt_create_conversation = mysqli_prepare($conn, $sql_create_conversation);
+            mysqli_stmt_bind_param($stmt_create_conversation, "iis", $user_id, $receiver_id, $message);
+            mysqli_stmt_execute($stmt_create_conversation);
+            $conversation_id = mysqli_insert_id($conn);
+        }
+
+        // Insert the new message into the database
+        $sql_send_message = "INSERT INTO messages (conversation_id, sender_id, receiver_id, message, file_path, created_at, is_read) 
+                             VALUES (?, ?, ?, ?, ?, NOW(), 0)";
+        $stmt_send_message = mysqli_prepare($conn, $sql_send_message);
+        mysqli_stmt_bind_param($stmt_send_message, "iiiss", $conversation_id, $user_id, $receiver_id, $message, $file_path);
+        mysqli_stmt_execute($stmt_send_message);
+
+        header("Location: messages.php?receiver_id=" . $receiver_id);
+        exit();
+    }
+}
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Messages</title>
+    <link rel="stylesheet" href="messagesstyle.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="homepage.php">Home</a>
+            <a href="profile.php">Profile</a>
+            <a href="logout.php">Logout</a>
+        </nav>
+    </header>
+
+    <div class="container">
+        <aside class="sidebar">
+            <h2>Your Friends</h2>
+            <ul class="friends-list">
+                <?php while ($friend = mysqli_fetch_assoc($result_friends)): ?>
+                    <li>
+                        <img src="<?= htmlspecialchars($friend['profile_picture']) ?>" alt="Profile Picture">
+                        <?= htmlspecialchars($friend['username']) ?>
+                    </li>
+                <?php endwhile; ?>
+            </ul>
+        </aside>
+
+        <main class="messages">
+            <h2>Conversations</h2>
+            <ul class="conversations-list">
+                <?php while ($conversation = mysqli_fetch_assoc($result_conversations)): ?>
+                    <li>
+                        <a href="messages.php?receiver_id=<?= $conversation['user_id'] ?>">
+                            <img src="<?= htmlspecialchars($conversation['profile_picture']) ?>" alt="Profile Picture">
+                            <?= htmlspecialchars($conversation['username']) ?>
+                        </a>
+                    </li>
+                <?php endwhile; ?>
+            </ul>
+
+            <?php if ($receiver_id): ?>
+                <div class="message-box">
+                    <?php
+                    // Fetch the receiver's username for the conversation header
+                    $sql_receiver = "SELECT username FROM users WHERE user_id = ?";
+                    $stmt_receiver = mysqli_prepare($conn, $sql_receiver);
+                    mysqli_stmt_bind_param($stmt_receiver, "i", $receiver_id);
+                    mysqli_stmt_execute($stmt_receiver);
+                    $result_receiver = mysqli_stmt_get_result($stmt_receiver);
+                    $receiver = mysqli_fetch_assoc($result_receiver);
+                    $receiver_name = $receiver['username'];
+                    ?>
+                    <h3>Conversation with <?= htmlspecialchars($receiver_name) ?></h3>
+                    <div class="messages-display">
+                        <?php if (mysqli_num_rows($result_messages) > 0): ?>
+                            <?php while ($message = mysqli_fetch_assoc($result_messages)): ?>
+                                <div class="message <?= $message['sender_id'] == $user_id ? 'sent' : 'received' ?>">
+                                    <p><?= htmlspecialchars($message['message']) ?></p>
+                                    <?php if ($message['file_path']): ?>
+                                        <a href="<?= htmlspecialchars($message['file_path']) ?>" download>Download file</a>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endwhile; ?>
+                        <?php endif; ?>
+                    </div>
+
+                    <form method="POST" enctype="multipart/form-data">
+                        <textarea name="message" placeholder="Type a message..." required></textarea>
+                        <input type="file" name="file">
+                        <button type="submit">Send</button>
+                    </form>
+                </div>
+            <?php endif; ?>
+        </main>
+    </div>
+</body>
+</html>

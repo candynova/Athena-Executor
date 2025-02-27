@@ -1,0 +1,269 @@
+<?php
+session_start();
+require_once 'config.php';
+
+// Ensure that the user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+$profile_id = filter_input(INPUT_GET, 'user_id', FILTER_VALIDATE_INT) ?: $user_id;  // Default to logged-in user
+
+// Fetch profile details and counts in one query
+function fetchProfileData($conn, $profile_id) {
+    $query = "
+        SELECT u.user_id, u.username, u.bio, u.interests, u.join_date, u.profile_picture, u.cover_photo,
+               COUNT(DISTINCT c.comment_id) AS comment_count,
+               COUNT(DISTINCT p.post_id) AS post_count
+        FROM users u
+        LEFT JOIN comments c ON c.user_id = u.user_id
+        LEFT JOIN posts p ON p.user_id = u.user_id
+        WHERE u.user_id = ?
+        GROUP BY u.user_id";
+
+    if ($stmt = $conn->prepare($query)) {
+        $stmt->bind_param('i', $profile_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        return $result->fetch_assoc();
+    }
+    return null;
+}
+
+$profile_user = fetchProfileData($conn, $profile_id);
+
+if (!$profile_user) {
+    header("Location: error.php?message=User not found");
+    exit();
+}
+
+// Sanitize data to avoid XSS
+$cover_photo = !empty($profile_user['cover_photo']) ? htmlspecialchars($profile_user['cover_photo']) : '';
+$profile_picture = !empty($profile_user['profile_picture']) ? htmlspecialchars($profile_user['profile_picture']) : 'profilepic.png';
+
+// Get Friendship Status Function
+function getFriendshipStatus($conn, $user_id, $profile_id) {
+    $query = "SELECT status FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)";
+
+    if ($stmt = $conn->prepare($query)) {
+        $stmt->bind_param('iiii', $user_id, $profile_id, $profile_id, $user_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        return $result->fetch_assoc()['status'] ?? null;
+    }
+    return null;
+}
+
+$friendship_status = getFriendshipStatus($conn, $user_id, $profile_id);
+
+// Handle Friend Request Submission
+function handleFriendRequest($conn, $user_id, $profile_id) {
+    $check_query = "SELECT status FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)";
+
+    if ($check_stmt = $conn->prepare($check_query)) {
+        $check_stmt->bind_param('iiii', $user_id, $profile_id, $profile_id, $user_id);
+        $check_stmt->execute();
+        $check_result = $check_stmt->get_result();
+
+        if ($check_result->num_rows > 0) {
+            $existing_friendship = $check_result->fetch_assoc();
+            switch ($existing_friendship['status']) {
+                case 'pending':
+                    return "Friend request already sent.";
+                case 'accepted':
+                    return "You are already friends.";
+                default:
+                    return "Unknown status.";
+            }
+        } else {
+            $query = "INSERT INTO friendships (user_id, friend_id, status) VALUES (?, ?, 'pending')";
+
+            if ($stmt = $conn->prepare($query)) {
+                $stmt->bind_param('ii', $user_id, $profile_id);
+                return $stmt->execute() ? "Friend request sent." : "Error adding friend request. Please try again later.";
+            }
+        }
+    }
+    return "Error processing friend request.";
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_friend'])) {
+    if ($profile_id && $profile_id != $user_id) {
+        echo handleFriendRequest($conn, $user_id, $profile_id);
+    } else {
+        echo "Invalid profile ID or trying to add yourself as a friend.";
+    }
+}
+
+function updateLastActivity($conn, $user_id) {
+    $update_query = "UPDATE users SET last_activity = NOW() WHERE user_id = ?";
+
+    if ($update_stmt = $conn->prepare($update_query)) {
+        $update_stmt->bind_param('i', $user_id);
+        $update_stmt->execute();
+    }
+}
+
+// Fetch posts for the profile page
+function fetchPosts($conn, $profile_id, $limit = 10, $offset = 0) {
+    $query = "
+        SELECT p.post_id, p.user_id, p.content, p.created_at, u.username, u.profile_picture 
+        FROM posts p 
+        JOIN users u ON p.user_id = u.user_id 
+        WHERE p.user_id = ? 
+        ORDER BY p.created_at DESC 
+        LIMIT ? OFFSET ?";
+
+    if ($stmt = $conn->prepare($query)) {
+        $stmt->bind_param('iii', $profile_id, $limit, $offset);
+        $stmt->execute();
+        return $stmt->get_result();
+    }
+    return null;
+}
+
+// Handle creating new posts (if needed)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['new_post'])) {
+    $content = trim($_POST['post_content']);
+    if (!empty($content)) {
+        $query = "INSERT INTO posts (user_id, content, created_at) VALUES (?, ?, NOW())";
+        if ($stmt = $conn->prepare($query)) {
+            $stmt->bind_param('is', $user_id, $content);
+            $stmt->execute();
+            header("Location: profile.php?user_id=" . $profile_id); // Redirect to refresh posts
+            exit();
+        }
+    }
+}
+
+// Pagination Setup (Assuming 10 posts per page)
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$limit = 10;
+$offset = ($page - 1) * $limit;
+$posts = fetchPosts($conn, $profile_id, $limit, $offset);
+
+// Count total posts for pagination
+$total_posts_query = "SELECT COUNT(*) AS total FROM posts WHERE user_id = ?";
+if ($stmt = $conn->prepare($total_posts_query)) {
+    $stmt->bind_param('i', $profile_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $total_posts = $result->fetch_assoc()['total'];
+}
+$total_pages = ceil($total_posts / $limit);
+
+updateLastActivity($conn, $user_id);
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta property="og:title" content="<?= htmlspecialchars($profile_user['username']) ?>'s Profile">
+    <meta property="og:image" content="<?= htmlspecialchars($profile_user['profile_picture']) ?>">
+    <meta property="og:description" content="<?= nl2br(htmlspecialchars($profile_user['bio'] ?? 'No bio available')) ?>">
+    <meta name="twitter:title" content="<?= htmlspecialchars($profile_user['username']) ?>'s Profile">
+    <meta name="twitter:image" content="<?= htmlspecialchars($profile_user['profile_picture']) ?>">
+    <meta name="twitter:description" content="<?= nl2br(htmlspecialchars($profile_user['bio'] ?? 'No bio available')) ?>">
+    <title><?= htmlspecialchars($profile_user['username']) ?>'s Profile</title>
+    <link rel="stylesheet" href="/profilepage.css">
+</head>
+<body>
+    <!-- Include your navbar and profile page content here -->
+    <div class="navbar">
+        <ul>
+            <li><a href="messages.php">Messages</a></li>
+            <li><a href="games.php">Games</a></li>
+            <li><a href="friends.php">Friends</a></li>
+            <li><a href="homepage.php">NewsFeed</a></li>
+            <li><button id="theme-toggle">🌙</button></li>
+        </ul>
+    </div>
+
+    <div class="profile-page">
+        <!-- Profile header -->
+        <div class="profile-header">
+            <div class="cover-photo">
+                <img src="<?= $cover_photo ?>" alt="Cover Photo" class="cover-img">
+            </div>
+            <div class="profile-info">
+                <div class="user-details">
+                    <h2><?= htmlspecialchars($profile_user['username']) ?></h2>
+                    <p class="bio"><?= nl2br(htmlspecialchars($profile_user['bio'] ?? 'No bio available')) ?></p>
+                    <p class="join-date">Member since: <?= $profile_user['join_date'] ? date('M d, Y', strtotime($profile_user['join_date'])) : 'N/A' ?></p>
+                    <p class="post-count">Posts: <?= $profile_user['post_count'] ?> | Comments: <?= $profile_user['comment_count'] ?></p>
+                    <!-- Friendship Action Buttons -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Post Creation Form -->
+        <div class="new-post-form">
+            <form method="POST">
+                <textarea name="post_content" placeholder="What's on your mind?" required></textarea>
+                <button type="submit" name="new_post" class="submit-post-btn">Post</button>
+            </form>
+        </div>
+
+        <!-- Posts Section -->
+        <div class="posts-section">
+            <h3>Posts</h3>
+            <?php if ($posts && $posts->num_rows > 0): ?>
+                <?php while ($post = $posts->fetch_assoc()): ?>
+                    <div class="post">
+                        <div class="post-header">
+                            <img src="<?= htmlspecialchars($post['profile_picture']) ?>" alt="User Profile Picture" class="post-avatar">
+                            <span class="post-username"><?= htmlspecialchars($post['username']) ?></span>
+                            <span class="post-date"><?= date('M d, Y H:i', strtotime($post['created_at'])) ?></span>
+                        </div>
+                        <div class="post-content"><?= nl2br(htmlspecialchars($post['content'])) ?></div>
+                        <div class="post-actions">
+                            <form method="POST">
+                                <button type="submit" name="like_post" class="like-btn">Like</button>
+                                <input type="hidden" name="post_id" value="<?= $post['post_id'] ?>">
+                            </form>
+
+                            <!-- Comment Button Form -->
+                            <form method="POST">
+                                <button type="button" class="comment-btn" onclick="toggleCommentForm(<?= $post['post_id'] ?>)">Comment</button>
+                            </form>
+
+                            <!-- Comment Form -->
+                            <div id="comment-form-<?= $post['post_id'] ?>" class="comment-form" style="display: none;">
+                                <form method="POST">
+                                    <textarea name="comment_content" placeholder="Add a comment..." required></textarea>
+                                    <button type="submit" name="submit_comment" class="submit-comment-btn">Post Comment</button>
+                                    <input type="hidden" name="post_id" value="<?= $post['post_id'] ?>">
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                <?php endwhile; ?>
+            <?php else: ?>
+                <p>No posts to display.</p>
+            <?php endif; ?>
+        </div>
+
+        <!-- Pagination Links -->
+        <div class="pagination">
+            <?php if ($page > 1): ?>
+                <a href="profile.php?user_id=<?= $profile_id ?>&page=<?= $page - 1 ?>">Prev</a>
+            <?php endif; ?>
+            <?php if ($page < $total_pages): ?>
+                <a href="profile.php?user_id=<?= $profile_id ?>&page=<?= $page + 1 ?>">Next</a>
+            <?php endif; ?>
+        </div>
+
+    </div>
+
+    <script>
+    function toggleCommentForm(postId) {
+        var form = document.getElementById('comment-form-' + postId);
+        form.style.display = (form.style.display === 'none' || form.style.display === '') ? 'block' : 'none';
+    }
+    </script>
+</body>
+</html>

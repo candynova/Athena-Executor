@@ -1,0 +1,261 @@
+<?php
+include('config.php');
+session_start();
+
+// Check if the user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+
+// Helper function to safely apply htmlspecialchars
+function safe_htmlspecialchars($value) {
+    return htmlspecialchars($value ?? '', ENT_QUOTES, 'UTF-8');
+}
+
+// Constants for configuration
+define('MAX_FILE_SIZE', 10 * 1024 * 1024); // 10MB
+define('ALLOWED_IMAGE_TYPES', ['image/jpeg', 'image/png', 'image/gif']);
+define('ALLOWED_VIDEO_TYPES', ['video/mp4', 'video/avi']);
+define('UPLOAD_DIR_MEDIA', 'uploads/group_media/');
+define('UPLOAD_DIR_PHOTOS', 'uploads/group_photos/');
+
+// Function to handle file uploads
+function handle_file_upload($file, $allowed_types, $max_size, $upload_dir) {
+    if (!is_dir($upload_dir)) {
+        mkdir($upload_dir, 0777, true);
+    }
+
+    $file_name = time() . "_" . basename($file['name']);
+    $file_path = $upload_dir . $file_name;
+
+    if (in_array($file['type'], $allowed_types) && $file['size'] <= $max_size) {
+        if (move_uploaded_file($file['tmp_name'], $file_path)) {
+            return $file_name;
+        }
+    }
+
+    echo "<p class='error'>Invalid file or upload failed.</p>";
+    return null;
+}
+
+// Function to fetch data
+function fetch_data($sql, $params) {
+    global $conn;
+    $stmt = mysqli_prepare($conn, $sql);
+    mysqli_stmt_bind_param($stmt, ...$params);
+    mysqli_stmt_execute($stmt);
+    $result = mysqli_stmt_get_result($stmt);
+    mysqli_stmt_close($stmt);
+    return mysqli_fetch_all($result, MYSQLI_ASSOC);
+}
+
+// Function to get the time ago format
+function time_ago($timestamp) {
+    $time_ago = strtotime($timestamp);
+    $current_time = time();
+    $time_difference = $current_time - $time_ago;
+    $seconds = $time_difference;
+
+    $minutes = round($seconds / 60);
+    $hours = round($seconds / 3600);
+    $days = round($seconds / 86400);
+    $weeks = round($seconds / 604800);
+    $months = round($seconds / 2629440);
+    $years = round($seconds / 31553280);
+
+    if ($seconds <= 60) {
+        return "Just Now";
+    } else if ($minutes <= 60) {
+        return ($minutes == 1) ? "one minute ago" : "$minutes minutes ago";
+    } else if ($hours <= 24) {
+        return ($hours == 1) ? "an hour ago" : "$hours hours ago";
+    } else if ($days <= 7) {
+        return ($days == 1) ? "yesterday" : "$days days ago";
+    } else if ($weeks <= 4.3) {
+        return ($weeks == 1) ? "one week ago" : "$weeks weeks ago";
+    } else if ($months <= 12) {
+        return ($months == 1) ? "one month ago" : "$months months ago";
+    } else {
+        return ($years == 1) ? "one year ago" : "$years years ago";
+    }
+}
+
+// Get group ID from the query string
+if (isset($_GET['group_id']) && is_numeric($_GET['group_id'])) {
+    $group_id = $_GET['group_id'];  // Get the group_id from the URL
+
+    // Fetch group details
+    $group = fetch_data("SELECT g.group_id, g.name, g.description, u.username AS creator, g.group_photo
+                         FROM groups g
+                         LEFT JOIN users u ON g.created_by = u.user_id
+                         WHERE g.group_id = ?", ['i', $group_id]);
+
+    if (!$group) {
+        echo "No group found for group_id: " . safe_htmlspecialchars($group_id);
+        exit();
+    }
+
+    // Fetch group members
+    $members = fetch_data("SELECT u.username, u.profile_picture, r.role_name AS role
+                           FROM group_members gm
+                           LEFT JOIN users u ON gm.user_id = u.user_id
+                           LEFT JOIN roles r ON gm.role_id = r.role_id
+                           WHERE gm.group_id = ?", ['i', $group_id]);
+
+    // Handle status post submission (with optional image/video)
+    if (isset($_POST['post_status'])) {
+        $status_content = trim($_POST['content']);
+        $media_type = 'none';
+        $media_url = null;
+
+        // Handle media upload
+        if (isset($_FILES['media']) && $_FILES['media']['error'] == 0) {
+            $media = $_FILES['media'];
+
+            $media_url = handle_file_upload($media, array_merge(ALLOWED_IMAGE_TYPES, ALLOWED_VIDEO_TYPES), MAX_FILE_SIZE, UPLOAD_DIR_MEDIA);
+            $media_type = ($media_url) ? (in_array($media['type'], ALLOWED_IMAGE_TYPES) ? 'image' : 'video') : 'none';
+        }
+
+        // Insert the status into the database
+        $sql_post = "INSERT INTO group_posts (group_id, user_id, content, media_type, media_url)
+                     VALUES (?, ?, ?, ?, ?)";
+        $stmt = mysqli_prepare($conn, $sql_post);
+        mysqli_stmt_bind_param($stmt, "iisss", $group_id, $user_id, $status_content, $media_type, $media_url);
+
+        if (!mysqli_stmt_execute($stmt)) {
+            echo "<p class='error'>Error posting status: " . mysqli_error($conn) . "</p>";
+        }
+        mysqli_stmt_close($stmt);
+    }
+
+    // Fetch group events
+    $events = fetch_data("SELECT * FROM group_events WHERE group_id = ?", ['i', $group_id]);
+
+    // Fetch posts (with pinned posts at the top)
+    $posts = fetch_data("SELECT p.post_id, p.content, p.media_type, p.media_url, u.username, p.created_at, 
+                         p.is_pinned, (SELECT COUNT(*) FROM post_likes WHERE post_id = p.post_id) AS likes_count,
+                         (SELECT COUNT(*) FROM post_comments WHERE post_id = p.post_id) AS comments_count
+                         FROM group_posts p
+                         LEFT JOIN users u ON p.user_id = u.user_id
+                         WHERE p.group_id = ? ORDER BY p.is_pinned DESC, p.created_at DESC", ['i', $group_id]);
+}
+
+// Handle Group Photo Upload
+if (isset($_POST['upload_group_photo']) && isset($_FILES['group_photo'])) {
+    $file = $_FILES['group_photo'];
+
+    // Handle group photo upload
+    $photo_name = handle_file_upload($file, ALLOWED_IMAGE_TYPES, 5 * 1024 * 1024, UPLOAD_DIR_PHOTOS);
+
+    // Update the group photo in the database
+    if ($photo_name) {
+        $sql_update_photo = "UPDATE groups SET group_photo = ? WHERE group_id = ?";
+        $stmt = mysqli_prepare($conn, $sql_update_photo);
+        mysqli_stmt_bind_param($stmt, "si", $photo_name, $group_id);
+        if (mysqli_stmt_execute($stmt)) {
+            echo "<p class='success'>Group photo updated successfully!</p>";
+        } else {
+            echo "<p class='error'>Error updating group photo in the database.</p>";
+        }
+        mysqli_stmt_close($stmt);
+    }
+}
+
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?php echo safe_htmlspecialchars($group['name'] ?? 'No Name'); ?> - Group Page</title>
+    <link rel="stylesheet" href="grouppage.css">
+</head>
+<body>
+    <!-- Group Header Section -->
+    <div class="group-header">
+        <h1><?php echo safe_htmlspecialchars($group['name'] ?? 'No Name'); ?></h1>
+        <p>Created by: <?php echo safe_htmlspecialchars($group['creator'] ?? 'Unknown'); ?></p>
+        <p><?php echo safe_htmlspecialchars($group['description'] ?? 'No description available.'); ?></p>
+        <img src="<?php echo !empty($group['group_photo']) ? 'uploads/group_photos/' . safe_htmlspecialchars($group['group_photo']) : 'default-group-photo.jpg'; ?>" alt="Group Photo" class="group-photo">
+
+        <!-- Add Group Photo Section -->
+        <h3>Change Group Photo</h3>
+        <form method="POST" enctype="multipart/form-data">
+            <input type="file" name="group_photo" accept="image/jpeg, image/png" required>
+            <button type="submit" name="upload_group_photo">Upload Photo</button>
+        </form>
+    </div>
+
+    <!-- Group Members Section -->
+    <div class="group-members">
+        <h3>Group Members</h3>
+        <ul>
+            <?php foreach ($members as $member): ?>
+                <li>
+                    <img src="<?php echo !empty($member['profile_picture']) ? 'uploads/profile_pictures/' . safe_htmlspecialchars($member['profile_picture']) : 'default-profile.png'; ?>" alt="Member Profile Picture">
+                    <?php echo safe_htmlspecialchars($member['username']); ?> - <?php echo safe_htmlspecialchars($member['role']); ?>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    </div>
+
+    <!-- Create a Post Section -->
+    <div class="create-post">
+        <h3>Create a New Post</h3>
+        <form method="POST" enctype="multipart/form-data">
+            <textarea name="content" placeholder="Write something..." required></textarea><br><br>
+            
+            <label for="media">Attach Media (Image/Video):</label>
+            <input type="file" name="media" accept="image/jpeg, image/png, video/mp4, video/avi"><br><br>
+
+            <button type="submit" name="post_status">Post</button>
+        </form>
+    </div>
+
+<!-- Group Posts Section -->
+<div class="group-posts">
+    <h3>Group Posts</h3>
+    <?php if (!empty($posts)): ?>
+        <?php foreach ($posts as $post): ?>
+            <div class="post <?php echo $post['is_pinned'] ? 'pinned' : ''; ?>">
+                <p><strong><?php echo safe_htmlspecialchars($post['username']); ?></strong> 
+                <span class="post-time"><?php echo time_ago($post['created_at']); ?></span></p>
+                <p><?php echo nl2br(safe_htmlspecialchars($post['content'])); ?></p>
+                
+                <?php if ($post['media_type'] != 'none'): ?>
+                    <div class="post-media">
+                        <?php if ($post['media_type'] == 'image'): ?>
+                            <img src="<?php echo safe_htmlspecialchars($post['media_url']); ?>" alt="Post Media">
+                        <?php elseif ($post['media_type'] == 'video'): ?>
+                            <video controls>
+                                <source src="<?php echo safe_htmlspecialchars($post['media_url']); ?>" type="video/mp4">
+                            </video>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
+
+                <div class="post-actions">
+                    <!-- Like Button -->
+                    <form action="like_post.php" method="POST" class="like-form">
+                        <input type="hidden" name="post_id" value="<?php echo $post['post_id']; ?>">
+                        <button type="submit" class="like-btn">Like</button>
+                    </form>
+                    
+                    <!-- Comment Button -->
+                    <button class="comment-btn" onclick="window.location.href='comments.php?post_id=<?php echo $post['post_id']; ?>'">Comment</button>
+                    
+                    <p>Likes: <?php echo $post['likes_count']; ?> | Comments: <?php echo $post['comments_count']; ?></p>
+                </div>
+            </div>
+        <?php endforeach; ?>
+    <?php else: ?>
+        <p>No posts to display.</p>
+    <?php endif; ?>
+</div>
+
+
+</body>
+</html>

